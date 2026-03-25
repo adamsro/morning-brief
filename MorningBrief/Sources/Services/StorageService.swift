@@ -75,13 +75,25 @@ final class StorageService {
     return metadata
   }
 
+  /// Load the most recent report metadata, checking today and up to 7 days back.
   func loadLatestMetadata() -> ReportMetadata? {
-    let today = Self.dateFormatter.string(from: Date())
-    let metadataURL = Self.metadataDirectoryURL.appendingPathComponent("\(today).json")
-    guard let data = try? Data(contentsOf: metadataURL) else { return nil }
+    let calendar = Calendar.current
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    return try? decoder.decode(ReportMetadata.self, from: data)
+
+    for dayOffset in 0...7 {
+      guard let date = calendar.date(byAdding: .day, value: -dayOffset, to: Date()) else {
+        continue
+      }
+      let dateStr = Self.dateFormatter.string(from: date)
+      let metadataURL = Self.metadataDirectoryURL.appendingPathComponent("\(dateStr).json")
+      if let data = try? Data(contentsOf: metadataURL),
+        let metadata = try? decoder.decode(ReportMetadata.self, from: data)
+      {
+        return metadata
+      }
+    }
+    return nil
   }
 
   func loadReportContent(at path: String) -> String? {

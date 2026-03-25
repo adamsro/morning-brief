@@ -14,6 +14,30 @@ struct SettingsView: View {
     .monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday,
   ]
 
+  private var redditQueriesBinding: Binding<String> {
+    Binding(
+      get: { config.redditSearchQueries.joined(separator: "\n") },
+      set: { newValue in
+        config.redditSearchQueries = newValue.split(
+          separator: "\n", omittingEmptySubsequences: true
+        )
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+      }
+    )
+  }
+
+  private var hnQueriesBinding: Binding<String> {
+    Binding(
+      get: { config.hnSearchQueries.joined(separator: "\n") },
+      set: { newValue in
+        config.hnSearchQueries = newValue.split(separator: "\n", omittingEmptySubsequences: true)
+          .map { $0.trimmingCharacters(in: .whitespaces) }
+          .filter { !$0.isEmpty }
+      }
+    )
+  }
+
   var body: some View {
     Form {
       Section("Schedule") {
@@ -53,6 +77,29 @@ struct SettingsView: View {
           }
         Toggle("Social monitoring (Reddit & HN)", isOn: $config.socialMonitoringEnabled)
           .help("Fetch recent Reddit and Hacker News posts to include as context")
+      }
+
+      if config.socialMonitoringEnabled {
+        Section("Search Queries") {
+          Text("Reddit searches (one per line):")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          TextEditor(text: redditQueriesBinding)
+            .font(.system(.body, design: .monospaced))
+            .frame(minHeight: 80)
+
+          Text("Hacker News searches (one per line):")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          TextEditor(text: hnQueriesBinding)
+            .font(.system(.body, design: .monospaced))
+            .frame(minHeight: 80)
+
+          Button("Reset to Defaults") {
+            config.redditSearchQueries = BriefConfig.default.redditSearchQueries
+            config.hnSearchQueries = BriefConfig.default.hnSearchQueries
+          }
+        }
       }
 
       Section("Prompt") {

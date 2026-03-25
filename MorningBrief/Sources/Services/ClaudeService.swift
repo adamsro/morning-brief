@@ -33,6 +33,28 @@ actor ClaudeService {
   ]
 
   func findClaudeBinary() -> URL? {
+    // Use the login shell's PATH to find claude — macOS strips PATH for GUI apps,
+    // so npm/nvm/homebrew paths are invisible to ProcessInfo.environment["PATH"].
+    if let shellPath = resolveViaLoginShell() {
+      return shellPath
+    }
+
+    // Fallback: check well-known locations directly
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let candidates = [
+      "\(home)/.local/bin/claude",
+      "\(home)/.npm-global/bin/claude",
+      "/usr/local/bin/claude",
+      "/opt/homebrew/bin/claude",
+    ]
+
+    for path in candidates {
+      if FileManager.default.isExecutableFile(atPath: path) {
+        return URL(fileURLWithPath: path)
+      }
+    }
+
+    // Last resort: check the process environment PATH (works when launched from terminal)
     if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
       for dir in pathEnv.split(separator: ":") {
         let candidate = URL(fileURLWithPath: String(dir)).appendingPathComponent("claude")
@@ -42,16 +64,30 @@ actor ClaudeService {
       }
     }
 
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let allPaths = ["\(home)/.local/bin/claude"] + Self.searchPaths
-
-    for path in allPaths {
-      if FileManager.default.isExecutableFile(atPath: path) {
-        return URL(fileURLWithPath: path)
-      }
-    }
-
     return nil
+  }
+
+  private func resolveViaLoginShell() -> URL? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-l", "-c", "which claude"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+
+    guard (try? process.run()) != nil else { return nil }
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard
+      let path = String(data: data, encoding: .utf8)?.trimmingCharacters(
+        in: .whitespacesAndNewlines),
+      !path.isEmpty,
+      FileManager.default.isExecutableFile(atPath: path)
+    else { return nil }
+
+    return URL(fileURLWithPath: path)
   }
 
   // MARK: - Follow-up Chat (streaming)
