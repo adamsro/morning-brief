@@ -51,23 +51,38 @@ final class SchedulerService {
   // MARK: - Brief Schedule
 
   func checkAndRunIfDue() async {
-    guard !isGenerating else { return }
-    guard !StorageService.shared.hasRunToday() else { return }
+    guard !isGenerating else {
+      logger.info("Skipping check: already generating")
+      return
+    }
+    guard !StorageService.shared.hasRunToday() else {
+      logger.info("Skipping check: already ran today")
+      return
+    }
 
     let gregorian = Calendar(identifier: .gregorian)
     let weekday = gregorian.component(.weekday, from: Date())
-    if weekday == 1 || weekday == 7 { return }
+    if weekday == 1 || weekday == 7 {
+      logger.info("Skipping check: weekend (weekday=\(weekday))")
+      return
+    }
 
     if let lastFailure = lastFailureDate,
       Date().timeIntervalSince(lastFailure) < 300
     {
+      let elapsed = Int(Date().timeIntervalSince(lastFailure))
+      logger.info("Skipping check: failure backoff (\(elapsed)s of 300s)")
       return
     }
 
     let hour = Calendar.current.component(.hour, from: Date())
     let config = ConfigService.shared.config
-    guard hour >= config.scheduleHour else { return }
+    guard hour >= config.scheduleHour else {
+      logger.info("Skipping check: too early (hour=\(hour), scheduled=\(config.scheduleHour))")
+      return
+    }
 
+    logger.info("All checks passed, starting brief generation")
     await generateBrief()
   }
 
@@ -179,6 +194,13 @@ final class SchedulerService {
     let existingSession: SessionInfo? =
       storage.shouldStartNewWeek(resetDay: config.weeklyResetDay) ? nil : storage.loadSession()
 
+    if let session = existingSession {
+      logger.info("Resuming session \(session.sessionId) (day \(session.dayCount + 1) of week)")
+    } else {
+      logger.info("Starting fresh weekly session")
+    }
+    logger.info("Prompt length: \(userPrompt.count) chars, system prompt: \(systemPrompt.count) chars")
+
     do {
       generationProgress = "Generating brief..."
       let result: ReportResult
@@ -209,6 +231,7 @@ final class SchedulerService {
       }
 
       let duration = Date().timeIntervalSince(startTime)
+      logger.info("Claude returned \(result.markdown.count) chars in \(String(format: "%.1f", duration))s")
 
       let metadata = try storage.saveReport(
         markdown: result.markdown,
@@ -242,8 +265,11 @@ final class SchedulerService {
 
       if config.hasDiscordWebhook {
         generationProgress = "Posting to Discord..."
+        logger.info("Posting brief to Discord webhook")
         await discordService.postBrief(
           webhookURL: config.discordWebhookURL, markdown: result.markdown)
+      } else {
+        logger.info("No Discord webhook configured, skipping post")
       }
 
       if config.notificationsEnabled {

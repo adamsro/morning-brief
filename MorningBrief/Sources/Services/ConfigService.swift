@@ -16,17 +16,23 @@ final class ConfigService {
   func load() {
     let url = Self.configFileURL
     guard FileManager.default.fileExists(atPath: url.path) else {
+      logger.info("No config file at \(url.path), using defaults")
       config = .default
       return
     }
     do {
       let data = try Data(contentsOf: url)
+      logger.info("Config file loaded: \(data.count) bytes from \(url.path)")
       config = try JSONDecoder().decode(BriefConfig.self, from: data)
+      logger.info("Config decoded: scheduleHour=\(self.config.scheduleHour), hasDiscord=\(self.config.hasDiscordWebhook), social=\(self.config.socialMonitoringEnabled)")
     } catch {
-      // Config file exists but is unreadable or corrupt — reset to defaults so
-      // the app remains usable rather than failing to launch.
-      logger.warning("Failed to load config, resetting to defaults: \(error)")
+      logger.error("Failed to decode config: \(error)")
+      // Try to log what JSON keys are present for debugging
+      if let json = try? JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] {
+        logger.error("Config JSON keys: \(json.keys.sorted().joined(separator: ", "))")
+      }
       config = .default
+      logger.warning("Using default config — Discord webhooks and custom settings are NOT loaded")
     }
   }
 

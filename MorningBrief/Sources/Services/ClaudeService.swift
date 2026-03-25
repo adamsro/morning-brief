@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let logger = Logger(subsystem: "com.morningbrief.app", category: "ClaudeService")
 
 enum ClaudeError: LocalizedError, Sendable {
   case notInstalled
@@ -189,20 +192,27 @@ actor ClaudeService {
     systemPrompt: String, prompt: String, sessionId: String?
   ) async throws -> ReportResult {
     guard let binary = findClaudeBinary() else {
+      logger.error("Claude binary not found")
       throw ClaudeError.notInstalled
     }
+
+    logger.info("Using Claude binary at \(binary.path)")
 
     let process = Process()
     process.executableURL = binary
 
     var args = [
       "-p",
-      "--output-format", "json",
+      "--output-format", "stream-json",
+      "--verbose",
       "--allowedTools", "WebSearch,WebFetch",
       "--system-prompt", systemPrompt,
     ]
     if let sessionId {
       args += ["--resume", sessionId]
+      logger.info("Resuming session \(sessionId)")
+    } else {
+      logger.info("Starting fresh session")
     }
     process.arguments = args
 
@@ -214,9 +224,11 @@ actor ClaudeService {
     process.standardError = stderrPipe
 
     try process.run()
+    logger.info("Claude process launched (pid \(process.processIdentifier))")
 
     stdinPipe.fileHandleForWriting.write(Data(prompt.utf8))
     stdinPipe.fileHandleForWriting.closeFile()
+    logger.info("Prompt written to stdin (\(prompt.utf8.count) bytes)")
 
     // Drain stdout and stderr on background threads concurrently with the
     // timeout loop. If we wait until the process exits before calling
@@ -240,6 +252,7 @@ actor ClaudeService {
     while process.isRunning {
       if Date() > deadline {
         process.terminate()
+        logger.error("Claude process timed out after 10 minutes")
         throw ClaudeError.timeout
       }
       try await Task.sleep(for: .milliseconds(500))
@@ -248,20 +261,74 @@ actor ClaudeService {
     let stdout = try await stdoutData
     let stderr = try await stderrData
 
+    let stderrString = String(data: stderr, encoding: .utf8) ?? ""
+    logger.info("Claude process exited with code \(process.terminationStatus), stdout=\(stdout.count) bytes, stderr=\(stderr.count) bytes")
+    if !stderrString.isEmpty {
+      logger.warning("Claude stderr: \(stderrString.prefix(500))")
+    }
+
     guard process.terminationStatus == 0 else {
-      let stderrString = String(data: stderr, encoding: .utf8) ?? "Unknown error"
+      logger.error("Claude process failed: exit \(process.terminationStatus), stderr: \(stderrString.prefix(500))")
       throw ClaudeError.processFailure(exitCode: process.terminationStatus, stderr: stderrString)
     }
 
-    guard let json = try? JSONSerialization.jsonObject(with: stdout) as? [String: Any],
-      let result = json["result"] as? String,
-      let returnedSessionId = json["session_id"] as? String
-    else {
-      let raw = String(data: stdout, encoding: .utf8) ?? "<empty>"
-      throw ClaudeError.jsonParseFailure(String(raw.prefix(200)))
+    // Parse stream-json: each line is a JSON object. Aggregate text from
+    // assistant messages and extract session_id from the result line.
+    let raw = String(data: stdout, encoding: .utf8) ?? ""
+    let lines = raw.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    logger.info("Stream output: \(lines.count) JSON lines")
+
+    var aggregatedText = ""
+    var returnedSessionId: String?
+
+    for line in lines {
+      guard let lineData = line.data(using: .utf8),
+        let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+        let type = json["type"] as? String
+      else { continue }
+
+      switch type {
+      case "assistant":
+        // Extract text blocks from assistant message content
+        if let message = json["message"] as? [String: Any],
+          let content = message["content"] as? [[String: Any]]
+        {
+          for block in content {
+            if let blockType = block["type"] as? String, blockType == "text",
+              let text = block["text"] as? String
+            {
+              aggregatedText += text
+            }
+          }
+        }
+        if let sid = json["session_id"] as? String {
+          returnedSessionId = sid
+        }
+      case "result":
+        if let sid = json["session_id"] as? String {
+          returnedSessionId = sid
+        }
+        // Also check the result field in case the CLI bug is fixed
+        if aggregatedText.isEmpty, let result = json["result"] as? String, !result.isEmpty {
+          aggregatedText = result
+        }
+      default:
+        break
+      }
     }
 
-    return ReportResult(markdown: result, sessionId: returnedSessionId)
+    guard let sessionId = returnedSessionId else {
+      logger.error("No session_id found in stream output")
+      throw ClaudeError.jsonParseFailure("Missing session_id in stream response")
+    }
+
+    if aggregatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      logger.error("Claude returned no text content. Session: \(sessionId). Lines: \(lines.count)")
+      throw ClaudeError.jsonParseFailure("Claude returned an empty result — report would be blank")
+    }
+
+    logger.info("Report generated successfully: \(aggregatedText.count) chars, session \(sessionId)")
+    return ReportResult(markdown: aggregatedText, sessionId: sessionId)
   }
 
   private static func parseStreamDelta(_ line: String) -> String? {

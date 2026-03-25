@@ -169,19 +169,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   // MARK: - Status Icon Animation
 
+  private var animationFrame = 0
+
   private func startStatusAnimation() {
     statusAnimationTimer?.invalidate()
-    var frame = 0
+    animationFrame = 0
     statusAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
       [weak self] _ in
       Task { @MainActor in
-        guard let button = self?.statusBarItem.button else { return }
+        guard let self, let button = self.statusBarItem.button else { return }
         let symbols = ["newspaper", "newspaper.fill", "arrow.clockwise", "newspaper.fill"]
         button.image = NSImage(
-          systemSymbolName: symbols[frame % symbols.count],
+          systemSymbolName: symbols[self.animationFrame % symbols.count],
           accessibilityDescription: "Generating report"
         )
-        frame += 1
+        self.animationFrame += 1
       }
     }
   }

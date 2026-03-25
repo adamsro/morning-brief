@@ -3,7 +3,7 @@ import os
 
 actor DiscordService {
   private static let logger = Logger(
-    subsystem: "com.morningbrief.app", category: "discord")
+    subsystem: "com.morningbrief.app", category: "DiscordService")
   private static let maxMessageLength = 2000
 
   func postSocialPosts(
@@ -42,7 +42,13 @@ actor DiscordService {
       return
     }
 
+    guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      Self.logger.warning("Skipping Discord post — markdown content is empty")
+      return
+    }
+
     let chunks = Self.splitIntoChunks(markdown)
+    Self.logger.info("Posting brief to Discord: \(chunks.count) chunks from \(markdown.count) chars")
 
     for (index, chunk) in chunks.enumerated() {
       let success = await postMessage(url: url, content: chunk)
@@ -55,6 +61,7 @@ actor DiscordService {
         try? await Task.sleep(for: .milliseconds(500))
       }
     }
+    Self.logger.info("Successfully posted all \(chunks.count) chunks to Discord")
   }
 
   private func postMessage(url: URL, content: String) async -> Bool {
@@ -65,18 +72,27 @@ actor DiscordService {
 
     let body: [String: String] = ["content": content]
     guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
+      Self.logger.error("Failed to serialize Discord message body")
       return false
     }
     request.httpBody = bodyData
 
-    guard let (_, response) = try? await URLSession.shared.data(for: request),
-      let http = response as? HTTPURLResponse,
-      (200...299).contains(http.statusCode)
-    else {
+    do {
+      let (responseData, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse else {
+        Self.logger.error("Discord response was not HTTP")
+        return false
+      }
+      if (200...299).contains(http.statusCode) {
+        return true
+      }
+      let responseBody = String(data: responseData, encoding: .utf8) ?? "<non-utf8>"
+      Self.logger.error("Discord returned HTTP \(http.statusCode): \(responseBody.prefix(300))")
+      return false
+    } catch {
+      Self.logger.error("Discord request failed: \(error.localizedDescription)")
       return false
     }
-
-    return true
   }
 
   static func splitIntoChunks(_ markdown: String) -> [String] {

@@ -23,7 +23,7 @@ enum Weekday: Int, Codable, CaseIterable, Sendable {
   }
 }
 
-struct BriefConfig: Codable, Sendable, Equatable {
+struct BriefConfig: Sendable, Equatable {
   var promptTemplate: String
   var scheduleHour: Int
   var notificationsEnabled: Bool
@@ -37,6 +37,31 @@ struct BriefConfig: Codable, Sendable, Equatable {
 
   var hasDiscordWebhook: Bool {
     !discordWebhookURL.trimmingCharacters(in: .whitespaces).isEmpty
+  }
+}
+
+// Decode resiliently — unknown keys in config.json are silently ignored,
+// and missing keys fall back to defaults so the app never loses settings.
+extension BriefConfig: Codable {
+  enum CodingKeys: String, CodingKey {
+    case promptTemplate, scheduleHour, notificationsEnabled
+    case socialMonitoringEnabled, redditSearchQueries, hnSearchQueries
+    case weeklyResetDay, discordWebhookURL, discordRedditWebhookURL, discordHNWebhookURL
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let d = BriefConfig.default
+    promptTemplate = (try? c.decode(String.self, forKey: .promptTemplate)) ?? d.promptTemplate
+    scheduleHour = (try? c.decode(Int.self, forKey: .scheduleHour)) ?? d.scheduleHour
+    notificationsEnabled = (try? c.decode(Bool.self, forKey: .notificationsEnabled)) ?? d.notificationsEnabled
+    socialMonitoringEnabled = (try? c.decode(Bool.self, forKey: .socialMonitoringEnabled)) ?? d.socialMonitoringEnabled
+    redditSearchQueries = (try? c.decode([String].self, forKey: .redditSearchQueries)) ?? d.redditSearchQueries
+    hnSearchQueries = (try? c.decode([String].self, forKey: .hnSearchQueries)) ?? d.hnSearchQueries
+    weeklyResetDay = (try? c.decode(Weekday.self, forKey: .weeklyResetDay)) ?? d.weeklyResetDay
+    discordWebhookURL = (try? c.decode(String.self, forKey: .discordWebhookURL)) ?? d.discordWebhookURL
+    discordRedditWebhookURL = (try? c.decode(String.self, forKey: .discordRedditWebhookURL)) ?? d.discordRedditWebhookURL
+    discordHNWebhookURL = (try? c.decode(String.self, forKey: .discordHNWebhookURL)) ?? d.discordHNWebhookURL
   }
 
   static let `default` = BriefConfig(
