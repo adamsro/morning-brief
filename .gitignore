@@ -1,0 +1,11 @@
+# Shell script config (contains user-specific settings)
+config.sh
+reports/
+.morning-brief/
+
+# Swift build artifacts
+MorningBrief/.build/
+MorningBrief/.swiftpm/
+
+# macOS
+.DS_Store
