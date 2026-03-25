@@ -9,6 +9,7 @@ struct SettingsView: View {
   @State private var config: BriefConfig = .default
   @State private var launchAtLogin = false
   @State private var saveTask: Task<Void, Never>?
+  @State private var newCompetitor = ""
 
   private static let weekdays: [Weekday] = [
     .monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday,
@@ -102,9 +103,41 @@ struct SettingsView: View {
         }
       }
 
+      Section("Competitors") {
+        Text("Tracked in daily briefs. Order by priority (most direct first).")
+          .font(.callout)
+          .foregroundStyle(.secondary)
+        ForEach(config.competitors, id: \.self) { competitor in
+          HStack {
+            Text(competitor)
+            Spacer()
+            Button {
+              config.competitors.removeAll { $0 == competitor }
+            } label: {
+              Image(systemName: "minus.circle.fill")
+                .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
+          }
+        }
+        .onMove { from, to in
+          config.competitors.move(fromOffsets: from, toOffset: to)
+        }
+        HStack {
+          TextField("Add competitor…", text: $newCompetitor)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { addCompetitor() }
+          Button("Add") { addCompetitor() }
+            .disabled(newCompetitor.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        Button("Reset to Defaults") {
+          config.competitors = BriefConfig.default.competitors
+        }
+      }
+
       Section("Prompt") {
         Text(
-          "Sent to Claude Code to generate your brief. Use {{DATE}} for today's date, {{DAY_TYPE}} for Monday deep-dive flag."
+          "Sent to Claude Code to generate your brief. Use {{DATE}} for today's date, {{DAY_TYPE}} for Monday deep-dive flag, {{COMPETITORS}} for the competitor list."
         )
         .font(.callout)
         .foregroundStyle(.secondary)
@@ -141,6 +174,13 @@ struct SettingsView: View {
         logger.warning("Failed to save config: \(error)")
       }
     }
+  }
+
+  private func addCompetitor() {
+    let name = newCompetitor.trimmingCharacters(in: .whitespaces)
+    guard !name.isEmpty, !config.competitors.contains(name) else { return }
+    config.competitors.append(name)
+    newCompetitor = ""
   }
 
   private func toggleLoginItem(_ enabled: Bool) {

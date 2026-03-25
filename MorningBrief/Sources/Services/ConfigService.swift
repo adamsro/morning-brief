@@ -66,9 +66,12 @@ final class ConfigService {
     let dateString = Self.promptDateFormatter.string(from: Date())
     let dayType = isMonday ? "MONDAY — do a broader weekly competitive landscape scan." : ""
 
+    let competitorList = config.competitors.joined(separator: ", ")
+
     var prompt = config.promptTemplate
       .replacingOccurrences(of: "{{DATE}}", with: dateString)
       .replacingOccurrences(of: "{{DAY_TYPE}}", with: dayType)
+      .replacingOccurrences(of: "{{COMPETITORS}}", with: competitorList)
 
     if !socialPosts.isEmpty {
       let capped = Array(socialPosts.prefix(20))

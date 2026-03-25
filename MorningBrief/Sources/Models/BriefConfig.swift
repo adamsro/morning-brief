@@ -34,6 +34,7 @@ struct BriefConfig: Sendable, Equatable {
   var discordWebhookURL: String
   var discordRedditWebhookURL: String
   var discordHNWebhookURL: String
+  var competitors: [String]
 
   var hasDiscordWebhook: Bool {
     !discordWebhookURL.trimmingCharacters(in: .whitespaces).isEmpty
@@ -47,6 +48,7 @@ extension BriefConfig: Codable {
     case promptTemplate, scheduleHour, notificationsEnabled
     case socialMonitoringEnabled, redditSearchQueries, hnSearchQueries
     case weeklyResetDay, discordWebhookURL, discordRedditWebhookURL, discordHNWebhookURL
+    case competitors
   }
 
   init(from decoder: Decoder) throws {
@@ -62,6 +64,7 @@ extension BriefConfig: Codable {
     discordWebhookURL = (try? c.decode(String.self, forKey: .discordWebhookURL)) ?? d.discordWebhookURL
     discordRedditWebhookURL = (try? c.decode(String.self, forKey: .discordRedditWebhookURL)) ?? d.discordRedditWebhookURL
     discordHNWebhookURL = (try? c.decode(String.self, forKey: .discordHNWebhookURL)) ?? d.discordHNWebhookURL
+    competitors = (try? c.decode([String].self, forKey: .competitors)) ?? d.competitors
   }
 
   static let `default` = BriefConfig(
@@ -91,7 +94,23 @@ extension BriefConfig: Codable {
     weeklyResetDay: .monday,
     discordWebhookURL: "",
     discordRedditWebhookURL: "",
-    discordHNWebhookURL: ""
+    discordHNWebhookURL: "",
+    competitors: [
+      "MacWhisper",
+      "Granola",
+      "Talat",
+      "BB Recorder",
+      "Otter.ai",
+      "Fireflies.ai",
+      "Krisp",
+      "Fathom",
+      "tl;dv",
+      "Notta",
+      "Tactiq",
+      "Supernormal",
+      "Rev",
+      "Whisper Transcription",
+    ]
   )
 
   static func formattedHour(_ hour: Int) -> String {

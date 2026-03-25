@@ -4,7 +4,7 @@ Today's date: {{DATE}}
 Product: MimicScribe
 Description: macOS menu bar app for real-time speech-to-text transcription using on-device AI. Features meeting recording with speaker diarization, voice-to-text insert mode, and AI-powered voice instructions. Uses NVIDIA Parakeet via CoreML for local, private transcription.
 Website: mimicscribe.app
-Key competitors: MacWhisper, Granola, BB Recorder, Otter.ai, Fireflies.ai, Krisp, Fathom, tl;dv, Notta, Tactiq, Supernormal, Rev, Whisper Transcription
+Key competitors: {{COMPETITORS}}
 
 Your primary job: give me 1-3 things I can DO today. Not a report to read — action items to execute.
 
