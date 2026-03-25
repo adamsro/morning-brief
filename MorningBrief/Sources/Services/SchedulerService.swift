@@ -14,10 +14,17 @@ final class SchedulerService {
   var onReportGenerated: ((ReportMetadata, String) -> Void)?
   var onError: ((AppError) -> Void)?
 
+  private static let gregorian = Calendar(identifier: .gregorian)
+
   private let claudeService = ClaudeService()
   private let discordService = DiscordService()
   private var timer: Timer?
   private var lastFailureDate: Date?
+
+  /// Gregorian weekday for today (Sunday = 1 … Saturday = 7).
+  private var todayWeekday: Int {
+    Self.gregorian.component(.weekday, from: Date())
+  }
 
   func start() {
     Task {
@@ -60,8 +67,7 @@ final class SchedulerService {
       return
     }
 
-    let gregorian = Calendar(identifier: .gregorian)
-    let weekday = gregorian.component(.weekday, from: Date())
+    let weekday = todayWeekday
     if weekday == 1 || weekday == 7 {
       logger.info("Skipping check: weekend (weekday=\(weekday))")
       return
@@ -169,25 +175,40 @@ final class SchedulerService {
     let startTime = Date()
     let config = ConfigService.shared.config
 
-    // Fetch social posts for brief context (uses all posts, not just unseen)
-    var socialPosts: [SocialMonitorService.SocialPost] = []
-    if config.socialMonitoringEnabled {
-      let fetchResult = await SocialMonitorService.shared.fetchRecentPosts(
-        redditQueries: config.redditSearchQueries,
-        hnQueries: config.hnSearchQueries
-      )
-      socialPosts = fetchResult.posts
-      if fetchResult.hadErrors {
-        logger.warning("Some social feed requests failed; brief may lack full social context.")
-        generationProgress = "Generating brief (social feeds partially unavailable)..."
-      }
+    do {
+      let socialPosts = await fetchSocialContext(config: config)
+      let result = try await runClaudeWithRetry(config: config, socialPosts: socialPosts)
+
+      let duration = Date().timeIntervalSince(startTime)
+      logger.info("Claude returned \(result.markdown.count) chars in \(String(format: "%.1f", duration))s")
+
+      try await handleSuccess(result: result, config: config, duration: duration)
+    } catch {
+      handleFailure(error: error, config: config)
     }
 
-    let gregorian = Calendar(identifier: .gregorian)
-    let weekday = gregorian.component(.weekday, from: Date())
-    let isMonday = weekday == 2
-    let userPrompt = ConfigService.shared.buildPrompt(
-      socialPosts: socialPosts, isMonday: isMonday)
+    isGenerating = false
+    generationProgress = ""
+  }
+
+  private func fetchSocialContext(config: BriefConfig) async -> [SocialMonitorService.SocialPost] {
+    guard config.socialMonitoringEnabled else { return [] }
+    let fetchResult = await SocialMonitorService.shared.fetchRecentPosts(
+      redditQueries: config.redditSearchQueries,
+      hnQueries: config.hnSearchQueries
+    )
+    if fetchResult.hadErrors {
+      logger.warning("Some social feed requests failed; brief may lack full social context.")
+      generationProgress = "Generating brief (social feeds partially unavailable)..."
+    }
+    return fetchResult.posts
+  }
+
+  private func runClaudeWithRetry(
+    config: BriefConfig, socialPosts: [SocialMonitorService.SocialPost]
+  ) async throws -> ReportResult {
+    let isMonday = todayWeekday == 2
+    let userPrompt = ConfigService.shared.buildPrompt(socialPosts: socialPosts, isMonday: isMonday)
     let systemPrompt = ConfigService.shared.systemPrompt
 
     let storage = StorageService.shared
@@ -201,84 +222,68 @@ final class SchedulerService {
     }
     logger.info("Prompt length: \(userPrompt.count) chars, system prompt: \(systemPrompt.count) chars")
 
-    do {
-      generationProgress = "Generating brief..."
-      let result: ReportResult
+    generationProgress = "Generating brief..."
 
-      if let session = existingSession {
-        do {
-          result = try await claudeService.runClaude(
-            systemPrompt: systemPrompt,
-            prompt: userPrompt,
-            sessionId: session.sessionId
-          )
-        } catch ClaudeError.timeout {
-          throw ClaudeError.timeout
-        } catch {
-          generationProgress = "Retrying with fresh session..."
-          result = try await claudeService.runClaude(
-            systemPrompt: systemPrompt,
-            prompt: userPrompt,
-            sessionId: nil
-          )
-        }
-      } else {
-        result = try await claudeService.runClaude(
-          systemPrompt: systemPrompt,
-          prompt: userPrompt,
-          sessionId: nil
-        )
-      }
-
-      let duration = Date().timeIntervalSince(startTime)
-      logger.info("Claude returned \(result.markdown.count) chars in \(String(format: "%.1f", duration))s")
-
-      let metadata = try storage.saveReport(
-        markdown: result.markdown,
-        sessionId: result.sessionId,
-        duration: duration
-      )
-
-      let updatedSession: SessionInfo
-      if let existing = existingSession {
-        updatedSession = SessionInfo(
-          sessionId: result.sessionId,
-          weekStartDate: existing.weekStartDate,
-          dayCount: existing.dayCount + 1
-        )
-      } else {
-        updatedSession = SessionInfo(
-          sessionId: result.sessionId,
-          weekStartDate: Date(),
-          dayCount: 1
-        )
-      }
+    if let session = existingSession {
       do {
-        try storage.saveSession(updatedSession)
+        return try await claudeService.runClaude(
+          systemPrompt: systemPrompt, prompt: userPrompt, sessionId: session.sessionId)
+      } catch ClaudeError.timeout {
+        throw ClaudeError.timeout
       } catch {
-        logger.warning("Failed to save session state: \(error)")
+        generationProgress = "Retrying with fresh session..."
+        return try await claudeService.runClaude(
+          systemPrompt: systemPrompt, prompt: userPrompt, sessionId: nil)
       }
+    }
 
-      storage.markRanToday()
-      lastFailureDate = nil
-      onReportGenerated?(metadata, result.markdown)
+    return try await claudeService.runClaude(
+      systemPrompt: systemPrompt, prompt: userPrompt, sessionId: nil)
+  }
 
-      if config.hasDiscordWebhook {
-        generationProgress = "Posting to Discord..."
-        logger.info("Posting brief to Discord webhook")
-        await discordService.postBrief(
-          webhookURL: config.discordWebhookURL, markdown: result.markdown)
-      } else {
-        logger.info("No Discord webhook configured, skipping post")
-      }
+  private func handleSuccess(
+    result: ReportResult, config: BriefConfig, duration: Double
+  ) async throws {
+    let storage = StorageService.shared
 
-      if config.notificationsEnabled {
-        NotificationService.shared.postReportReady(date: Date())
-      }
-    } catch let error as ClaudeError {
-      lastFailureDate = Date()
-      let appError: AppError
-      switch error {
+    let metadata = try storage.saveReport(
+      markdown: result.markdown, sessionId: result.sessionId, duration: duration)
+
+    let existingSession = storage.loadSession()
+    let updatedSession = SessionInfo(
+      sessionId: result.sessionId,
+      weekStartDate: existingSession?.weekStartDate ?? Date(),
+      dayCount: (existingSession?.dayCount ?? 0) + 1
+    )
+    do {
+      try storage.saveSession(updatedSession)
+    } catch {
+      logger.warning("Failed to save session state: \(error)")
+    }
+
+    storage.markRanToday()
+    lastFailureDate = nil
+    onReportGenerated?(metadata, result.markdown)
+
+    if config.hasDiscordWebhook {
+      generationProgress = "Posting to Discord..."
+      logger.info("Posting brief to Discord webhook")
+      await discordService.postBrief(
+        webhookURL: config.discordWebhookURL, markdown: result.markdown)
+    } else {
+      logger.info("No Discord webhook configured, skipping post")
+    }
+
+    if config.notificationsEnabled {
+      NotificationService.shared.postReportReady(date: Date())
+    }
+  }
+
+  private func handleFailure(error: Error, config: BriefConfig) {
+    lastFailureDate = Date()
+    let appError: AppError
+    if let claudeError = error as? ClaudeError {
+      switch claudeError {
       case .notInstalled:
         appError = .claudeNotInstalled
       case .processFailure(_, let stderr):
@@ -288,21 +293,13 @@ final class SchedulerService {
       case .timeout:
         appError = .generationFailed(detail: "Claude Code timed out after 10 minutes")
       }
-
-      onError?(appError)
-      if config.notificationsEnabled {
-        NotificationService.shared.postError(appError.message)
-      }
-    } catch {
-      lastFailureDate = Date()
-      let appError = AppError.generationFailed(detail: error.localizedDescription)
-      onError?(appError)
-      if config.notificationsEnabled {
-        NotificationService.shared.postError(appError.message)
-      }
+    } else {
+      appError = .generationFailed(detail: error.localizedDescription)
     }
 
-    isGenerating = false
-    generationProgress = ""
+    onError?(appError)
+    if config.notificationsEnabled {
+      NotificationService.shared.postError(appError.message)
+    }
   }
 }

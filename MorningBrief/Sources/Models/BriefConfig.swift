@@ -126,12 +126,12 @@ extension BriefConfig: Codable {
     return f
   }()
 
-  private static var defaultPromptTemplate: String {
+  private static let defaultPromptTemplate: String = {
     guard let url = Bundle.module.url(forResource: "DefaultPrompt", withExtension: "md"),
       let content = try? String(contentsOf: url, encoding: .utf8)
     else {
       return "Generate a daily competitive intelligence briefing. Cite all sources with links."
     }
     return content
-  }
+  }()
 }

@@ -97,15 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let statusMenuItem = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
     statusMenuItem.isEnabled = false
-    if let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular) as NSFont? {
-      statusMenuItem.attributedTitle = NSAttributedString(
-        string: statusText,
-        attributes: [
-          .font: font,
-          .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-      )
-    }
+    let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    statusMenuItem.attributedTitle = NSAttributedString(
+      string: statusText,
+      attributes: [
+        .font: font,
+        .foregroundColor: NSColor.secondaryLabelColor,
+      ]
+    )
     menu.addItem(statusMenuItem)
 
     if let error = appState.error {

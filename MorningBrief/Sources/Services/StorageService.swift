@@ -190,11 +190,11 @@ final class StorageService {
     try? data.write(to: Self.seenPostsFileURL)
   }
 
-  /// Add new URLs to seen set, pruning entries older than 7 days worth (cap at 500 to prevent unbounded growth).
+  /// Add new URLs to seen set, capping at 500 entries to prevent unbounded growth.
   func markPostsSeen(_ newURLs: [String]) {
     var seen = loadSeenPostURLs()
     seen.formUnion(newURLs)
-    // Cap at 500 most recent to prevent unbounded growth
+    // Cap at 500 to prevent unbounded growth (Set has no ordering, so eviction is arbitrary)
     if seen.count > 500 {
       let sorted = Array(seen)
       seen = Set(sorted.suffix(500))

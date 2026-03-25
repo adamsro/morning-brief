@@ -1,9 +1,9 @@
 import Foundation
-import os
+import OSLog
+
+private let logger = Logger(subsystem: "com.morningbrief.app", category: "DiscordService")
 
 actor DiscordService {
-  private static let logger = Logger(
-    subsystem: "com.morningbrief.app", category: "DiscordService")
   private static let maxMessageLength = 2000
 
   func postSocialPosts(
@@ -30,7 +30,7 @@ actor DiscordService {
       let success = await postMessage(
         url: url, content: String(message.prefix(Self.maxMessageLength)))
       if !success {
-        Self.logger.warning("Failed to post social item to Discord")
+        logger.warning("Failed to post social item to Discord")
       }
       try? await Task.sleep(for: .milliseconds(300))
     }
@@ -38,22 +38,22 @@ actor DiscordService {
 
   func postBrief(webhookURL: String, markdown: String) async {
     guard let url = URL(string: webhookURL) else {
-      Self.logger.warning("Invalid Discord webhook URL")
+      logger.warning("Invalid Discord webhook URL")
       return
     }
 
     guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      Self.logger.warning("Skipping Discord post — markdown content is empty")
+      logger.warning("Skipping Discord post — markdown content is empty")
       return
     }
 
     let chunks = Self.splitIntoChunks(markdown)
-    Self.logger.info("Posting brief to Discord: \(chunks.count) chunks from \(markdown.count) chars")
+    logger.info("Posting brief to Discord: \(chunks.count) chunks from \(markdown.count) chars")
 
     for (index, chunk) in chunks.enumerated() {
       let success = await postMessage(url: url, content: chunk)
       if !success {
-        Self.logger.warning("Failed to post chunk \(index + 1)/\(chunks.count) to Discord")
+        logger.warning("Failed to post chunk \(index + 1)/\(chunks.count) to Discord")
         return
       }
       // Brief pause between messages to maintain ordering
@@ -61,7 +61,7 @@ actor DiscordService {
         try? await Task.sleep(for: .milliseconds(500))
       }
     }
-    Self.logger.info("Successfully posted all \(chunks.count) chunks to Discord")
+    logger.info("Successfully posted all \(chunks.count) chunks to Discord")
   }
 
   private func postMessage(url: URL, content: String) async -> Bool {
@@ -72,7 +72,7 @@ actor DiscordService {
 
     let body: [String: String] = ["content": content]
     guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
-      Self.logger.error("Failed to serialize Discord message body")
+      logger.error("Failed to serialize Discord message body")
       return false
     }
     request.httpBody = bodyData
@@ -80,17 +80,17 @@ actor DiscordService {
     do {
       let (responseData, response) = try await URLSession.shared.data(for: request)
       guard let http = response as? HTTPURLResponse else {
-        Self.logger.error("Discord response was not HTTP")
+        logger.error("Discord response was not HTTP")
         return false
       }
       if (200...299).contains(http.statusCode) {
         return true
       }
       let responseBody = String(data: responseData, encoding: .utf8) ?? "<non-utf8>"
-      Self.logger.error("Discord returned HTTP \(http.statusCode): \(responseBody.prefix(300))")
+      logger.error("Discord returned HTTP \(http.statusCode): \(responseBody.prefix(300))")
       return false
     } catch {
-      Self.logger.error("Discord request failed: \(error.localizedDescription)")
+      logger.error("Discord request failed: \(error.localizedDescription)")
       return false
     }
   }

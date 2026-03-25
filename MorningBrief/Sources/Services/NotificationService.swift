@@ -14,10 +14,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
   private var isAvailable = false
 
-  override init() {
-    super.init()
-  }
-
   func setup() {
     // UNUserNotificationCenter requires a proper app bundle.
     // Guard against crashes when running via `swift run`.

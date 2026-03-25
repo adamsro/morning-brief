@@ -30,11 +30,6 @@ struct ReportResult: Sendable {
 
 actor ClaudeService {
 
-  private static let searchPaths = [
-    "/usr/local/bin/claude",
-    "/opt/homebrew/bin/claude",
-  ]
-
   func findClaudeBinary() -> URL? {
     // Use the login shell's PATH to find claude — macOS strips PATH for GUI apps,
     // so npm/nvm/homebrew paths are invisible to ProcessInfo.environment["PATH"].
